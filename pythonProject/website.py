@@ -183,13 +183,5 @@ for origin in destinationAirportsList:
             print(row + "\n")
             rows_arrival.append(row)
 
-df_outbound = pd.DataFrame(rows_departure)
-df_return = pd.DataFrame(rows_arrival)
-
-script_dir = os.path.dirname(os.path.abspath(__file__))
-output_file = os.path.join(script_dir, 'output.xlsx')
-with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-    df_outbound.to_excel(writer, sheet_name='Outbound Flights', index=False)
-    df_return.to_excel(writer, sheet_name='Return Flights', index=False)
 
 print("Done")

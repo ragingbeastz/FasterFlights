@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+    <title>Ryanair Flight Search Engine</title>
+</head>
+<body>
+
+<h1>Ryanair Flight Search Engine</h1>
+<p>This HTML is running Python in the background!</p>
+
+<h2>Please Select a country From the Dropdown List</h2>
+<select id="countryList">
+    <option value="default">Select a country</option>
+    <option value="Albania">Albania</option>
+    <option value="Austria">Austria</option>
+    <option value="Belgium">Belgium</option>
+    <option value="Bosnia & Herzegovina">Bosnia & Herzegovina</option>
+    <option value="Bulgaria">Bulgaria</option>
+    <option value="Croatia">Croatia</option>
+    <option value="Cyprus">Cyprus</option>
+    <option value="Czech Republic">Czech Republic</option>
+    <option value="Denmark">Denmark</option>
+    <option value="Estonia">Estonia</option>
+    <option value="Finland">Finland</option>
+    <option value="France">France</option>
+    <option value="Germany">Germany</option>
+    <option value="Greece">Greece</option>
+    <option value="Hungary">Hungary</option>
+    <option value="Ireland">Ireland</option>
+    <option value="Israel">Israel</option>
+    <option value="Italy">Italy</option>
+    <option value="Jordan">Jordan</option>
+    <option value="Latvia">Latvia</option>
+    <option value="Lithuania">Lithuania</option>
+    <option value="Luxembourg">Luxembourg</option>
+    <option value="Malta">Malta</option>
+    <option value="Montenegro">Montenegro</option>
+    <option value="Morocco">Morocco</option>
+    <option value="Netherlands">Netherlands</option>
+    <option value="Norway">Norway</option>
+    <option value="Poland">Poland</option>
+    <option value="Portugal">Portugal</option>
+    <option value="Romania">Romania</option>
+    <option value="Serbia">Serbia</option>
+    <option value="Slovakia">Slovakia</option>
+    <option value="Spain">Spain</option>
+    <option value="Sweden">Sweden</option>
+    <option value="Switzerland">Switzerland</option>
+    <option value="Turkey">Turkey</option>
+    <option value="United Kingdom">United Kingdom</option>
+</select>
+
+<h2>Please Enter a departure date</h2>
+<input type="date" id="departureDate">
+
+<h2>Please Enter a return date</h2>
+<input type="date" id="returnDate">
+
+<button id="searchFlightsButton">Search Flights</button>
+
+<h2>Flight Results</h2>
+<pre id="results"></pre>
+
+<py-script>
+    from js import fetch, document
+    from pyodide.ffi import create_proxy
+    import json
+
+    async def getAllAirports():
+        url = "https://www.ryanair.com/api/views/locate/5/airports/en/active"
+        response = await fetch(url)
+        data = await response.text()
+        airportsList = json.loads(data)
+        return airportsList
+
+    async def getAirportsByCountry(country_name):
+        airports = await getAllAirports()
+        matching_airports = []
+        for airport in airports:
+            if airport['country']['name'] == country_name:
+                matching_airports.append(airport)
+        return matching_airports
+
+    async def getFlightInfo(fromCode, toCode, startDate, currency="GBP"):
+        url = f"https://www.ryanair.com/api/farfnd/v4/oneWayFares/{fromCode}/{toCode}/cheapestPerDay?outboundMonthOfDate={startDate}&currency={currency}"
+        
+        # Optional: Add a string replacement step to remove any unexpected invisible characters
+        url = url.replace("¤", "&").replace("%C2%A4", "&")
+
+        response = await fetch(url)
+        if response.status == 400:
+            return {"Exists": False, "Error": "Bad Request: Invalid URL or parameters"}
+
+        data = await response.json()
+
+        # Convert JavaScript object to Python dictionary
+        data = data.to_py()
+
+        try:
+            fares = data['outbound']['fares']
+        except KeyError:
+            return {"Exists": False}
+
+        for fare in fares:
+            # Check if arrivalDate or departureDate is None
+            if fare['arrivalDate'] is None or fare['departureDate'] is None:
+                continue  # Skip this fare if either date is missing
+
+            # Otherwise, split the dates and proceed
+            arrivaldate = fare['arrivalDate']
+            departuredate = fare['departureDate']
+
+            # Split the date and time correctly
+            arrivalDay, arrivalTime = arrivaldate.split('T')
+            departureDay, departureTime = departuredate.split('T')
+
+            return {
+                "Exists": True,
+                "departureDate": departureDay,
+                "departureTime": departureTime,
+                "arrivalDate": arrivalDay,
+                "arrivalTime": arrivalTime,
+                "price": fare['price']['value']
+            }
+
+        return {"Exists": False}
+
+    async def getFlights(event):
+        # Get the selected country and dates from HTML
+        country = document.getElementById("countryList").value
+        departureDate = document.getElementById("departureDate").value
+        returnDate = document.getElementById("returnDate").value
+
+        if country == "default":
+            document.getElementById("results").textContent = "Please select a country."
+            return
+
+        if not departureDate or not returnDate:
+            document.getElementById("results").textContent = "Please enter both departure and return dates."
+            return
+
+        # Fetch airports based on the selected country
+        origin_airports = await getAirportsByCountry("United Kingdom")
+        destination_airports = await getAirportsByCountry(country)
+
+        results = []
+
+        # Find departure flights
+        results.append("Departure Flights\n")
+        for origin in origin_airports:
+            for destination in destination_airports:
+                bestFlight = await getFlightInfo(origin['code'], destination['code'], departureDate)
+                if bestFlight['Exists']:
+                    results.append(f"From {origin['name']} to {destination['name']}:")
+                    results.append(f"Departure: {bestFlight['departureDate']} {bestFlight['departureTime']}")
+                    results.append(f"Arrival: {bestFlight['arrivalDate']} {bestFlight['arrivalTime']}")
+                    results.append(f"Price: {bestFlight['price']}\n")
+
+        # Find return flights
+        results.append("Return Flights\n")
+        for destination in destination_airports:
+            for origin in origin_airports:
+                bestFlight = await getFlightInfo(destination['code'], origin['code'], returnDate)
+                if bestFlight['Exists']:
+                    results.append(f"From {destination['name']} to {origin['name']}:")
+                    results.append(f"Departure: {bestFlight['departureDate']} {bestFlight['departureTime']}")
+                    results.append(f"Arrival: {bestFlight['arrivalDate']} {bestFlight['arrivalTime']}")
+                    results.append(f"Price: {bestFlight['price']}\n")
+
+        # Display the results
+        document.getElementById("results").textContent = "\n".join(results)
+
+    # Use pyodide.create_proxy to ensure the function persists for the event listener
+    proxy = create_proxy(getFlights)
+    document.getElementById("searchFlightsButton").addEventListener("click", proxy)
+
+</py-script>
+
+</body>
+</html>
